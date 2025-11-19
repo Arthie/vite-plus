@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, cp, glob as fsGlob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,7 @@ import pkgJson from './package.json' with { type: 'json' };
 import viteRolldownConfig from './vite-rolldown.config';
 
 const projectDir = join(fileURLToPath(import.meta.url), '..');
+const rolldownViteSourceDir = resolve(projectDir, '..', '..', 'rolldown-vite', 'packages', 'vite');
 
 // Main build orchestration
 await buildCli();
@@ -45,8 +46,8 @@ async function buildNapiBinding() {
 
 async function buildCli() {
   await build({
-    input: ['./src/bin.ts', './src/index.ts', './src/test.ts'],
-    external: [/^node:/, 'vitest'],
+    input: ['./src/bin.ts', './src/index.ts', './src/config.ts'],
+    external: [/^node:/, 'vitest-dev', './vitest/dist/config.js', './vitest/dist/index.js'],
     plugins: [
       {
         name: 'rewrite-import-path',
@@ -55,7 +56,7 @@ async function buildCli() {
           const { magicString } = meta;
           if (moduleInfo?.isEntry && magicString) {
             magicString.replaceAll(`'vite'`, `'${pkgJson.name}/vite'`);
-            magicString.replaceAll(`export * from 'vitest';`, `export * from '${pkgJson.name}/vitest';`);
+            magicString.replaceAll(`export * from 'vitest-dev';`, `export * from './vitest/dist/index.js';`);
             return {
               code: magicString,
             };
@@ -65,6 +66,15 @@ async function buildCli() {
           if (id.startsWith(pkgJson.name)) {
             return { id, external: true };
           }
+        },
+        renderChunk(code) {
+          if (code.includes('import * as Rolldown from "rolldown"')) {
+            return code.replaceAll(
+              `import * as Rolldown from "rolldown"`,
+              `import * as Rolldown from "${pkgJson.name}/rolldown"`,
+            );
+          }
+          return code;
         },
       },
       dts(),
@@ -77,6 +87,8 @@ async function buildCli() {
       nativeMagicString: true,
     },
   });
+
+  await cp(join(rolldownViteSourceDir, 'client.d.ts'), join(projectDir, 'dist', 'vite', 'client.d.ts'));
 }
 
 async function buildVite() {
@@ -179,7 +191,6 @@ async function buildVite() {
   await build(newViteRolldownConfig as BuildOptions[]);
 
   // Copy additional vite files
-  const rolldownViteSourceDir = resolve(projectDir, '..', '..', 'rolldown-vite', 'packages', 'vite');
 
   await cp(join(rolldownViteSourceDir, 'misc'), join(projectDir, 'dist/vite/misc'), {
     recursive: true,
@@ -255,9 +266,13 @@ async function bundleRolldown() {
 
   // Rewrite @rolldown/pluginutils imports
   for (const file of rolldownFiles) {
-    const source = await readFile(file, 'utf-8');
-    if (source.includes('"@rolldown/pluginutils"')) {
-      await writeFile(file, source.replaceAll('"@rolldown/pluginutils"', `"${pkgJson.name}/rolldown/pluginutils"`));
+    if (file.endsWith('.mjs') || file.endsWith('.js')) {
+      const source = await readFile(file, 'utf-8');
+      let newSource = source.replaceAll('"@rolldown/pluginutils"', `"${pkgJson.name}/rolldown/pluginutils"`);
+      if (process.env.RELEASE_BUILD) {
+        newSource = newSource.replaceAll(`__require("../rolldown-binding`, `__require("./rolldown-binding`);
+      }
+      await writeFile(file, newSource);
     }
   }
 }
@@ -349,21 +364,20 @@ async function bundleVitepress() {
 }
 
 async function bundleVitest() {
-  const vitestSourceDir = resolve(projectDir, 'node_modules/vitest');
+  const vitestSourceDir = resolve(projectDir, 'node_modules/vitest-dev');
   const vitestDestDir = join(projectDir, 'dist/vitest');
 
   await mkdir(vitestDestDir, { recursive: true });
 
   // Get all vitest files excluding node_modules and package.json
-  const vitestFiles = await glob(join(vitestSourceDir, '**/*'), {
-    absolute: true,
-    ignore: [
+  const vitestFiles = fsGlob(join(vitestSourceDir, '**/*'), {
+    exclude: [
       join(vitestSourceDir, 'node_modules/**'),
       join(vitestSourceDir, 'package.json'),
     ],
   });
 
-  for (const file of vitestFiles) {
+  for await (const file of vitestFiles) {
     const stats = await stat(file);
     if (!stats.isFile()) continue;
 
@@ -384,7 +398,7 @@ async function bundleVitest() {
       ).replaceAll(`import 'vite';`, `import '${pkgJson.name}/vite';`).replaceAll(
         `'vite/module-runner'`,
         `'${pkgJson.name}/module-runner'`,
-      );
+      ).replaceAll(`declare module "vite"`, `declare module "${pkgJson.name}/vite"`);
       await writeFile(destPath, content, 'utf-8');
     } else {
       await copyFile(file, destPath);

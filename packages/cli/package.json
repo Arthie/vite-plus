@@ -19,12 +19,11 @@
       "default": "./dist/vitest/browser/context.js"
     },
     "./client": {
-      "types": "./dist/client.d.ts"
+      "types": "./dist/vite/client.d.ts"
     },
     "./config": {
-      "types": "./dist/vitest/config.d.ts",
-      "require": "./dist/vitest/dist/config.cjs",
-      "default": "./dist/vitest/dist/config.js"
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
     },
     "./coverage": {
       "types": "./dist/vitest/coverage.d.ts",
@@ -105,6 +104,10 @@
       "default": "./dist/rolldown/parse-ast-index.mjs",
       "types": "./dist/rolldown/parse-ast-index.d.mts"
     },
+    "./rolldown/plugins": {
+      "default": "./dist/rolldown/plugins-index.mjs",
+      "types": "./dist/rolldown/plugins-index.d.mts"
+    },
     "./rolldown/pluginutils": {
       "default": "./dist/pluginutils/index.js",
       "types": "./dist/pluginutils/index.d.ts"
@@ -121,10 +124,6 @@
     "./suite": {
       "types": "./dist/vitest/dist/suite.d.ts",
       "default": "./dist/vitest/dist/suite.js"
-    },
-    "./test": {
-      "import": "./dist/test.js",
-      "types": "./dist/test.d.ts"
     },
     "./tsdown/run": {
       "default": "./dist/tsdown/run.js"
@@ -189,32 +188,15 @@
     "dist"
   ],
   "dependencies": {
-    "@oxc-project/types": "=0.96.0",
-    "debug": "^4.4.3",
-    "oxfmt": "^0.9.0",
-    "oxlint": "^1.25.0",
-    "oxlint-tsgolint": "^0.4.0",
+    "@oxc-project/types": "catalog:",
+    "debug": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
     "postcss": "^8.5.6",
     "lightningcss": "^1.30.2",
     "semver": "^7.7.3",
     "tree-kill": "^1.2.2",
-    "@docsearch/css": "^4.0.0-beta.7",
-    "@docsearch/js": "^4.0.0-beta.7",
-    "@iconify-json/simple-icons": "^1.2.47",
-    "@shikijs/core": "^3.9.2",
-    "@shikijs/transformers": "^3.9.2",
-    "@shikijs/types": "^3.9.2",
-    "@types/markdown-it": "^14.1.2",
-    "@vitejs/plugin-vue": "^6.0.1",
-    "@vue/devtools-api": "^8.0.0",
-    "@vue/shared": "^3.5.18",
-    "@vueuse/core": "^13.6.0",
-    "@vueuse/integrations": "^13.6.0",
-    "focus-trap": "^7.6.5",
-    "mark.js": "8.11.1",
-    "minisearch": "^7.1.2",
-    "shiki": "^3.9.2",
-    "vue": "^3.5.18",
     "es-module-lexer": "^1.7.0",
     "expect-type": "^1.2.2",
     "magic-string": "^0.30.19",
@@ -225,33 +207,30 @@
     "tinyexec": "^0.3.2",
     "tinyglobby": "^0.2.15",
     "tinyrainbow": "^3.0.3",
-    "vite": "^6.0.0 || ^7.0.0",
     "why-is-node-running": "^2.3.0",
-    "@vitest/expect": "4.0.6",
-    "@vitest/pretty-format": "4.0.6",
-    "@vitest/runner": "4.0.6",
-    "@vitest/mocker": "4.0.6",
-    "@vitest/utils": "4.0.6",
-    "@vitest/spy": "4.0.6",
-    "@vitest/snapshot": "4.0.6"
+    "@vitest/expect": "4.0.10",
+    "@vitest/pretty-format": "4.0.10",
+    "@vitest/runner": "4.0.10",
+    "@vitest/mocker": "4.0.10",
+    "@vitest/utils": "4.0.10",
+    "@vitest/spy": "4.0.10",
+    "@vitest/snapshot": "4.0.10"
   },
   "peerDependencies": {
     "@arethetypeswrong/core": "^0.18.1",
     "@edge-runtime/vm": "*",
     "@types/debug": "^4.1.12",
     "@types/node": "^20.19.0 || >=22.12.0",
-    "@vitest/browser-playwright": "4.0.6",
-    "@vitest/browser-preview": "4.0.6",
-    "@vitest/browser-webdriverio": "4.0.6",
-    "@vitest/ui": "4.0.6",
+    "@vitejs/devtools": "^0.0.0-alpha.10",
+    "@vitest/browser-playwright": "4.0.10",
+    "@vitest/browser-preview": "4.0.10",
+    "@vitest/browser-webdriverio": "4.0.10",
+    "@vitest/ui": "4.0.10",
     "esbuild": "^0.25.0",
     "happy-dom": "*",
     "jiti": ">=1.21.0",
     "jsdom": "*",
     "less": "^4.0.0",
-    "markdown-it-mathjax3": "^4",
-    "oxc-minify": "^0.96.0",
-    "postcss": "^8",
     "publint": "^0.3.0",
     "sass": "^1.70.0",
     "sass-embedded": "^1.70.0",
@@ -276,6 +255,9 @@
       "optional": true
     },
     "@types/node": {
+      "optional": true
+    },
+    "@vitejs/devtools": {
       "optional": true
     },
     "@vitest/browser-playwright": {
@@ -303,15 +285,6 @@
       "optional": true
     },
     "less": {
-      "optional": true
-    },
-    "markdown-it-mathjax3": {
-      "optional": true
-    },
-    "oxc-minify": {
-      "optional": true
-    },
-    "postcss": {
       "optional": true
     },
     "publint": {
@@ -355,9 +328,8 @@
     "@babel/parser": "^7.28.4",
     "@napi-rs/cli": "^3.4.1",
     "@oxc-node/core": "^0.0.32",
-    "@oxc-project/types": "=0.96.0",
-    "@vitest/browser": "^4.0.6",
-    "@vitest/browser-playwright": "^4.0.6",
+    "@vitest/browser": "^4.0.10",
+    "@vitest/browser-playwright": "^4.0.10",
     "@voidzero-dev/vite-plus-tools": "workspace:",
     "es-module-lexer": "^1.7.0",
     "estree-walker": "^3.0.3",
@@ -371,9 +343,8 @@
     "rollup-plugin-license": "^3.6.0",
     "tinyglobby": "^0.2.15",
     "tsdown": "0.16.0",
-    "rolldown-vite": "^7.1.19",
-    "vitepress": "2.0.0-alpha.12",
-    "vitest": "^4.0.6"
+    "rolldown-vite": "workspace:*",
+    "vitest-dev": "^4.0.10"
   },
   "optionalDependencies": {
     "fsevents": "~2.3.3"
