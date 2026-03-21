@@ -22,6 +22,7 @@ import {
   VITE_PLUS_NAME,
   VITE_PLUS_OVERRIDE_PACKAGES,
   VITE_PLUS_VERSION,
+  isForceOverrideMode,
 } from '../utils/constants.js';
 import { editJsonFile, isJsonFile, readJsonFile } from '../utils/json.js';
 import { detectPackageMetadata } from '../utils/package.js';
@@ -837,7 +838,7 @@ function rewritePnpmWorkspaceYaml(projectPath: string): void {
       }
       doc.setIn(['overrides', scalarString(key)], scalarString(version));
     }
-    // remove dependency selector from vite, e.g. "vite-plugin-svgr>vite": "npm:rolldown-vite@7.0.12"
+    // remove dependency selector from vite, e.g. "vite-plugin-svgr>vite": "npm:vite@7.0.12"
     const overrides = doc.getIn(['overrides']) as YAMLMap<Scalar<string>, Scalar<string>>;
     for (const item of overrides.items) {
       if (item.key.value.includes('>')) {
@@ -982,19 +983,33 @@ function rewriteRootWorkspacePackageJson(
         ...VITE_PLUS_OVERRIDE_PACKAGES,
       };
     } else if (packageManager === PackageManager.pnpm) {
-      // pnpm use overrides field at pnpm-workspace.yaml
-      // so we don't need to set overrides field at package.json
-      // remove packages from `resolutions` field and `pnpm.overrides` field if they exist
-      // https://pnpm.io/9.x/package_json#resolutions
-      for (const key of [...Object.keys(VITE_PLUS_OVERRIDE_PACKAGES), ...REMOVE_PACKAGES]) {
-        if (pkg.pnpm?.overrides?.[key]) {
-          delete pkg.pnpm.overrides[key];
-        }
-        if (pkg.resolutions?.[key]) {
-          delete pkg.resolutions[key];
+      if (isForceOverrideMode()) {
+        // In force-override mode, keep overrides in package.json pnpm.overrides
+        // because pnpm ignores pnpm-workspace.yaml overrides when pnpm.overrides
+        // exists in package.json (even with unrelated entries like rollup).
+        pkg.pnpm = {
+          ...pkg.pnpm,
+          overrides: {
+            ...pkg.pnpm?.overrides,
+            ...VITE_PLUS_OVERRIDE_PACKAGES,
+            [VITE_PLUS_NAME]: VITE_PLUS_VERSION,
+          },
+        };
+      } else {
+        // pnpm use overrides field at pnpm-workspace.yaml
+        // so we don't need to set overrides field at package.json
+        // remove packages from `resolutions` field and `pnpm.overrides` field if they exist
+        // https://pnpm.io/9.x/package_json#resolutions
+        for (const key of [...Object.keys(VITE_PLUS_OVERRIDE_PACKAGES), ...REMOVE_PACKAGES]) {
+          if (pkg.pnpm?.overrides?.[key]) {
+            delete pkg.pnpm.overrides[key];
+          }
+          if (pkg.resolutions?.[key]) {
+            delete pkg.resolutions[key];
+          }
         }
       }
-      // remove dependency selector from vite, e.g. "vite-plugin-svgr>vite": "npm:rolldown-vite@7.0.12"
+      // remove dependency selector from vite, e.g. "vite-plugin-svgr>vite": "npm:vite@7.0.12"
       for (const key in pkg.pnpm?.overrides) {
         if (key.includes('>')) {
           const splits = key.split('>');
@@ -1394,7 +1409,7 @@ function mergeAndRemoveJsonConfig(
  * Merge a staged config object into vite.config.ts as `staged: { ... }`.
  * Writes the config to a temp JSON file, calls mergeJsonConfig NAPI, then cleans up.
  */
-function mergeStagedConfigToViteConfig(
+export function mergeStagedConfigToViteConfig(
   projectPath: string,
   stagedConfig: Record<string, string | string[]>,
   silent = false,
@@ -1440,7 +1455,7 @@ function mergeStagedConfigToViteConfig(
 /**
  * Check if vite.config.ts already has a `staged` config key.
  */
-function hasStagedConfigInViteConfig(projectPath: string): boolean {
+export function hasStagedConfigInViteConfig(projectPath: string): boolean {
   const configs = detectConfigs(projectPath);
   if (!configs.viteConfig) {
     return false;
@@ -1689,7 +1704,7 @@ export function setupGitHooks(
     const pkgData = readJsonFile<{ 'lint-staged'?: Record<string, string | string[]> }>(
       packageJsonPath,
     );
-    const stagedConfig = pkgData?.['lint-staged'] ?? { '*': 'vp check --fix' };
+    const stagedConfig = pkgData?.['lint-staged'] ?? DEFAULT_STAGED_CONFIG;
     const updated = rewriteScripts(JSON.stringify(stagedConfig), readRulesYaml());
     const finalConfig: Record<string, string | string[]> = updated
       ? JSON.parse(updated)
@@ -1821,6 +1836,20 @@ const STALE_LINT_STAGED_PATTERNS = [
   /^((?:[A-Z_][A-Z0-9_]*(?:=\S*)?\s+)*)(pnpm|pnpm exec|npx|yarn|yarn run|npm exec|npm run|bunx|bun run|bun x)\s+lint-staged\b/,
   /^((?:[A-Z_][A-Z0-9_]*(?:=\S*)?\s+)*)lint-staged\b/,
 ];
+
+const DEFAULT_STAGED_CONFIG: Record<string, string> = { '*': 'vp check --fix' };
+
+/**
+ * Ensure the pre-commit hook exists with `vp staged`, and that
+ * vite.config.ts contains a `staged` block (using the default config
+ * if none is present). Called by `vp config` after hook installation.
+ */
+export function ensurePreCommitHook(projectPath: string, dir = '.vite-hooks'): void {
+  if (!hasStagedConfigInViteConfig(projectPath)) {
+    mergeStagedConfigToViteConfig(projectPath, DEFAULT_STAGED_CONFIG, true);
+  }
+  createPreCommitHook(projectPath, dir);
+}
 
 export function createPreCommitHook(projectPath: string, dir = '.vite-hooks'): void {
   const huskyDir = path.join(projectPath, dir);

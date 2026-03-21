@@ -178,9 +178,24 @@ function Configure-UserPath {
     }
 
     $newPath = "$binPath;$userPath"
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    $env:Path = "$binPath;$env:Path"
-    return "true"
+    try {
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        $env:Path = "$binPath;$env:Path"
+        return "true"
+    } catch {
+        Write-Warn "Could not update user PATH automatically."
+        return "failed"
+    }
+}
+
+# Run vp env setup --refresh, showing output only on failure
+function Refresh-Shims {
+    param([string]$BinDir)
+    $setupOutput = & "$BinDir\vp.exe" env setup --refresh 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Failed to refresh shims:"
+        Write-Host "$setupOutput"
+    }
 }
 
 # Setup Node.js version manager (node/npm/npx shims)
@@ -193,13 +208,13 @@ function Setup-NodeManager {
     # Check if Vite+ is already managing Node.js (bin\node.exe exists)
     if (Test-Path "$binPath\node.exe") {
         # Already managing Node.js, just refresh shims
-        & "$BinDir\vp.exe" env setup --refresh | Out-Null
+        Refresh-Shims -BinDir $BinDir
         return "already"
     }
 
     # Auto-enable on CI environment
     if ($env:CI) {
-        & "$BinDir\vp.exe" env setup --refresh | Out-Null
+        Refresh-Shims -BinDir $BinDir
         return "true"
     }
 
@@ -208,7 +223,7 @@ function Setup-NodeManager {
 
     # Auto-enable if no node available on system
     if (-not $nodeAvailable) {
-        & "$BinDir\vp.exe" env setup --refresh | Out-Null
+        Refresh-Shims -BinDir $BinDir
         return "true"
     }
 
@@ -220,7 +235,7 @@ function Setup-NodeManager {
         $response = Read-Host "Press Enter to accept (Y/n)"
 
         if ($response -eq '' -or $response -eq 'y' -or $response -eq 'Y') {
-            & "$BinDir\vp.exe" env setup --refresh | Out-Null
+            Refresh-Shims -BinDir $BinDir
             return "true"
         }
     }
@@ -272,6 +287,11 @@ function Main {
         # Copy binary from LOCAL_BINARY env var (set by install-global-cli.ts)
         if ($LocalBinary -and (Test-Path $LocalBinary)) {
             Copy-Item -Path $LocalBinary -Destination (Join-Path $BinDir $binaryName) -Force
+            # Also copy trampoline shim binary if available (sibling to vp.exe)
+            $shimSource = Join-Path (Split-Path $LocalBinary) "vp-shim.exe"
+            if (Test-Path $shimSource) {
+                Copy-Item -Path $shimSource -Destination (Join-Path $BinDir "vp-shim.exe") -Force
+            }
         } else {
             Write-Error-Exit "VITE_PLUS_LOCAL_BINARY must be set when using VITE_PLUS_LOCAL_TGZ"
         }
@@ -293,9 +313,15 @@ function Main {
             & "$env:SystemRoot\System32\tar.exe" -xzf $platformTempFile -C $platformTempExtract
 
             # Copy binary to BinDir
-            $binarySource = Join-Path (Join-Path $platformTempExtract "package") $binaryName
+            $packageDir = Join-Path $platformTempExtract "package"
+            $binarySource = Join-Path $packageDir $binaryName
             if (Test-Path $binarySource) {
                 Copy-Item -Path $binarySource -Destination $BinDir -Force
+            }
+            # Also copy trampoline shim binary if present in the package
+            $shimSource = Join-Path $packageDir "vp-shim.exe"
+            if (Test-Path $shimSource) {
+                Copy-Item -Path $shimSource -Destination $BinDir -Force
             }
 
             Remove-Item -Recurse -Force $platformTempExtract
@@ -347,27 +373,46 @@ function Main {
     # Create new junction pointing to the version directory
     cmd /c mklink /J "$CurrentLink" "$VersionDir" | Out-Null
 
-    # Create bin directory and vp.cmd wrapper (always done)
-    # Set VITE_PLUS_HOME so the vp binary knows its home directory
+    # Create bin directory and vp wrapper (always done)
     New-Item -ItemType Directory -Force -Path "$InstallDir\bin" | Out-Null
-    $wrapperContent = @"
+    $trampolineSrc = "$VersionDir\bin\vp-shim.exe"
+    if (Test-Path $trampolineSrc) {
+        # New versions: use trampoline exe to avoid "Terminate batch job (Y/N)?" on Ctrl+C
+        Copy-Item -Path $trampolineSrc -Destination "$InstallDir\bin\vp.exe" -Force
+        # Remove legacy .cmd and shell script wrappers from previous versions
+        foreach ($legacy in @("$InstallDir\bin\vp.cmd", "$InstallDir\bin\vp")) {
+            if (Test-Path $legacy) {
+                Remove-Item -Path $legacy -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } else {
+        # Pre-trampoline versions: fall back to legacy .cmd and shell script wrappers.
+        # Remove any stale trampoline .exe shims left by a newer install — .exe wins
+        # over .cmd on Windows PATH, so leftover trampolines would bypass the wrappers.
+        foreach ($stale in @("vp.exe", "node.exe", "npm.exe", "npx.exe", "vpx.exe")) {
+            $stalePath = Join-Path "$InstallDir\bin" $stale
+            if (Test-Path $stalePath) {
+                Remove-Item -Path $stalePath -Force -ErrorAction SilentlyContinue
+            }
+        }
+        # Keep consistent with the original install.ps1 wrapper format
+        $wrapperContent = @"
 @echo off
 set VITE_PLUS_HOME=%~dp0..
 "%VITE_PLUS_HOME%\current\bin\vp.exe" %*
 exit /b %ERRORLEVEL%
 "@
-    Set-Content -Path "$InstallDir\bin\vp.cmd" -Value $wrapperContent -NoNewline
+        Set-Content -Path "$InstallDir\bin\vp.cmd" -Value $wrapperContent -NoNewline
 
-    # Create shell script wrapper for Git Bash (vp without extension)
-    # Note: We call vp.exe directly (not via symlink) because Windows symlinks
-    # require admin privileges and Git Bash symlink support is unreliable
-    $shContent = @"
+        # Also create shell script wrapper for Git Bash/MSYS
+        $shContent = @"
 #!/bin/sh
 VITE_PLUS_HOME="`$(dirname "`$(dirname "`$(readlink -f "`$0" 2>/dev/null || echo "`$0")")")"
 export VITE_PLUS_HOME
 exec "`$VITE_PLUS_HOME/current/bin/vp.exe" "`$@"
 "@
-    Set-Content -Path "$InstallDir\bin\vp" -Value $shContent -NoNewline
+        Set-Content -Path "$InstallDir\bin\vp" -Value $shContent -NoNewline
+    }
 
     # Cleanup old versions
     Cleanup-OldVersions -InstallDir $InstallDir
@@ -384,6 +429,7 @@ exec "`$VITE_PLUS_HOME/current/bin/vp.exe" "`$@"
     # ANSI color codes for consistent output
     $e = [char]27
     $GREEN = "$e[32m"
+    $YELLOW = "$e[33m"
     $BRIGHT_BLUE = "$e[94m"
     $BOLD = "$e[1m"
     $DIM = "$e[2m"
@@ -417,6 +463,22 @@ exec "`$VITE_PLUS_HOME/current/bin/vp.exe" "`$@"
     if ($pathResult -eq "true") {
         Write-Host ""
         Write-Host "  Note: Restart your terminal and IDE for changes to take effect."
+    }
+
+    # Show manual PATH instructions if PATH could not be configured
+    if ($pathResult -eq "failed") {
+        Write-Host ""
+        Write-Host "  ${YELLOW}note${NC}: Could not automatically add vp to your PATH."
+        Write-Host ""
+        Write-Host "  vp was installed to: ${BOLD}${displayDir}\bin${NC}"
+        Write-Host ""
+        Write-Host "  To use vp, manually add it to your PATH:"
+        Write-Host ""
+        Write-Host "    [Environment]::SetEnvironmentVariable('Path', '$InstallDir\bin;' + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')"
+        Write-Host ""
+        Write-Host "  Or run vp directly:"
+        Write-Host ""
+        Write-Host "    & `"$InstallDir\bin\vp.exe`""
     }
 
     Write-Host ""
