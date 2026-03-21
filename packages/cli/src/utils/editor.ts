@@ -184,10 +184,7 @@ export async function selectEditor({
     };
     const selectedEditor = await prompts.select({
       message: 'Which editor are you using?',
-      options:
-        editorOptions.length > 0
-          ? [editorOptions[0], noneOption, ...editorOptions.slice(1)]
-          : [noneOption],
+      options: [...editorOptions, noneOption],
       initialValue: 'vscode',
     });
 
@@ -343,7 +340,7 @@ function mergeAndWriteEditorConfig(
   displayPath: string,
   silent = false,
 ) {
-  const existing = readJsonFile(filePath);
+  const existing = readJsonFile(filePath, true);
   const merged = mergeEditorConfigs(existing, incoming, fileName);
   writeJsonFile(filePath, merged);
   if (!silent) {

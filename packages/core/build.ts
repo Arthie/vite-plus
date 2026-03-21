@@ -41,7 +41,7 @@ const rolldownPluginUtilsDir = resolve(
 
 const rolldownSourceDir = resolve(projectDir, '..', '..', 'rolldown', 'packages', 'rolldown');
 
-const rolldownViteSourceDir = resolve(projectDir, '..', '..', 'rolldown-vite', 'packages', 'vite');
+const rolldownViteSourceDir = resolve(projectDir, '..', '..', 'vite', 'packages', 'vite');
 
 const tsdownSourceDir = resolve(projectDir, 'node_modules/tsdown');
 
@@ -62,7 +62,7 @@ generateLicenseFile({
     projectDir,
     join(projectDir, '..', '..'),
     join(projectDir, '..', '..', 'rolldown'),
-    join(projectDir, '..', '..', 'rolldown-vite'),
+    join(projectDir, '..', '..', 'vite'),
   ],
   extraPackages: [
     {
@@ -428,6 +428,11 @@ async function bundleTsdown() {
       }),
     ],
   });
+
+  // Copy esm-shims.js to dist/ so tsdown's shims option can resolve it.
+  // tsdown resolves this file via path.resolve(import.meta.dirname, '..', 'esm-shims.js'),
+  // which means it expects the file at dist/esm-shims.js (one level up from dist/tsdown/).
+  await copyFile(join(tsdownSourceDir, 'esm-shims.js'), join(projectDir, 'dist/esm-shims.js'));
 }
 
 async function brandTsdown() {
@@ -635,13 +640,13 @@ async function mergePackageJson() {
   const vitePkg = JSON.parse(await readFile(vitePkgPath, 'utf-8'));
   const destPkg = JSON.parse(await readFile(destPkgPath, 'utf-8'));
 
-  // Merge peerDependencies from tsdown and rolldown-vite
+  // Merge peerDependencies from tsdown and vite
   destPkg.peerDependencies = {
     ...tsdownPkg.peerDependencies,
     ...vitePkg.peerDependencies,
   };
 
-  // Merge peerDependenciesMeta from tsdown and rolldown-vite
+  // Merge peerDependenciesMeta from tsdown and vite
   destPkg.peerDependenciesMeta = {
     ...tsdownPkg.peerDependenciesMeta,
     ...vitePkg.peerDependenciesMeta,
